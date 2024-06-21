@@ -67,5 +67,6 @@ protected:
 
 public:
 	FORCEINLINE class UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
+	FORCEINLINE UInputMappingContext* GetInputMappinContext() const {return DefaultMappingContext;}
 };
 

@@ -2,8 +2,30 @@
 
 
 #include "Core/MPShooterGameModeLobby.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerStart.h"
 #include "GameFramework/PlayerState.h"
+#include "Gameplay/ItemSpawnZone.h"
+#include "Kismet/GameplayStatics.h"
+#include "Net/UnrealNetwork.h"
+
+AMPShooterGameModeLobby::AMPShooterGameModeLobby()
+{
+	PrimaryActorTick.bCanEverTick = false;
+	bDelayedStart = true;
+	MaxItemsOnMap = 30;
+	SpawnInterval = 5.0f;
+	CurrentItemCount = 0;
+}
+
+void AMPShooterGameModeLobby::BeginPlay()
+{
+	Super::BeginPlay();
+	
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), APlayerStart::StaticClass(), PlayerSpawnZones);
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AItemSpawnZone::StaticClass(), ItemSpawnZones);
+}
 
 void AMPShooterGameModeLobby::PostLogin(APlayerController* NewPlayer)
 {
@@ -65,4 +87,85 @@ void AMPShooterGameModeLobby::Logout(AController* Exiting)
 			}
 		}
 	}
+}
+
+void AMPShooterGameModeLobby::StartMatch()
+{
+	Super::StartMatch();
+
+	GetWorld()->GetTimerManager().SetTimer(SpawnTimerHandle, this, &AMPShooterGameModeLobby::SpawnItems, SpawnInterval, true);
+}
+
+AActor* AMPShooterGameModeLobby::FindSpawnZoneForPlayer()
+{
+	for (AActor* SpawnZone : PlayerSpawnZones)
+	{
+		TArray<AActor*> OverlappingActors;
+		SpawnZone->GetOverlappingActors(OverlappingActors, ACharacter::StaticClass());
+
+		if (OverlappingActors.Num() == 0)
+		{
+			return SpawnZone;
+		}
+	}
+	
+	return nullptr;
+}
+
+void AMPShooterGameModeLobby::RespawnPlayer(AController* Controller)
+{
+	if (Controller)
+	{
+		if (AActor* SpawnZone = FindSpawnZoneForPlayer())
+		{
+			RestartPlayerAtPlayerStart(Controller, SpawnZone);
+		}
+		else
+		{
+			FTimerHandle RespawnTimerHandle;
+			GetWorldTimerManager().SetTimer(RespawnTimerHandle, FTimerDelegate::CreateUObject(this, &ThisClass::RespawnPlayer, Controller), 5.0f, false);
+		}
+	}
+}
+
+void AMPShooterGameModeLobby::DecreaseItemCount()
+{
+	CurrentItemCount--;
+
+	if (CurrentItemCount < MaxItemsOnMap)
+	{
+		if (!GetWorld()->GetTimerManager().IsTimerActive(SpawnTimerHandle))
+		{
+			GetWorld()->GetTimerManager().SetTimer(SpawnTimerHandle, this, &AMPShooterGameModeLobby::SpawnItems, SpawnInterval, true);
+		}
+	}
+}
+
+void AMPShooterGameModeLobby::SpawnItems()
+{
+	if (CurrentItemCount >= MaxItemsOnMap)
+	{
+		GetWorld()->GetTimerManager().ClearTimer(SpawnTimerHandle);
+		return;
+	}
+
+	for (AActor* SpawnZone : ItemSpawnZones)
+	{
+		if (AItemSpawnZone* ItemSpawnZone = Cast<AItemSpawnZone>(SpawnZone))
+		{
+			ItemSpawnZone->SpawnItem();
+			CurrentItemCount++;
+		}
+
+		if (CurrentItemCount >= MaxItemsOnMap)
+		{
+			break;
+		}
+	}
+}
+
+void AMPShooterGameModeLobby::ServerRequestRespawn_Implementation(AController* Controller)
+{
+	FTimerHandle RespawnTimerHandle;
+	GetWorldTimerManager().SetTimer(RespawnTimerHandle, FTimerDelegate::CreateUObject(this, &ThisClass::RespawnPlayer, Controller), 5.0f, false);
 }
